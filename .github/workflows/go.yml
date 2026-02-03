@@ -1,17 +1,13 @@
-name: Go CI/CD
+name: Build and Test
 
-on:
-  push:
-    branches: [ "master", "main" ]
-  pull_request:
-    branches: [ "master", "main" ]
+on: [push, pull_request]
 
 jobs:
-  build-and-test:
+  build:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
+    - name: Checkout
       uses: actions/checkout@v4
     
     - name: Setup Go
@@ -19,55 +15,17 @@ jobs:
       with:
         go-version: '1.21'
     
-    - name: Initialize Go module if needed
+    - name: Create go.mod if missing
       run: |
         if [ ! -f go.mod ]; then
-          echo "Initializing Go module..."
-          go mod init mitre-mitigates
+          echo "module mitre-mitigates" > go.mod
+          echo "go 1.21" >> go.mod
         fi
     
-    - name: Tidy modules (for future dependencies)
-      run: go mod tidy
-    
-    - name: Verify module
-      run: |
-        echo "Module info:"
-        go list -m
-        echo -e "\nProject structure:"
-        find . -name "*.go" | head -10
-    
     - name: Build
-      run: |
-        # Собираем текущий файл как исполняемый
-        go build -o mitremit mitre-mitigates.go
-        ls -la mitremit
+      run: go build -o mitremit mitre-mitigates.go
     
-    - name: Test (if tests exist)
+    - name: Smoke test
       run: |
-        # Создаем простой тест для проверки бинарника
-        ./mitremit -h 2>&1 | grep -i "usage" && echo "Build successful - help works"
-        # Если будут тесты в будущем, можно добавить:
-        # go test ./...
-    
-    - name: Create release artifacts
-      run: |
-        mkdir -p dist
-        
-        # Linux
-        GOOS=linux GOARCH=amd64 go build -o dist/mitremit-linux-amd64 mitre-mitigates.go
-        
-        # macOS
-        GOOS=darwin GOARCH=amd64 go build -o dist/mitremit-darwin-amd64 mitre-mitigates.go
-        
-        # Windows
-        GOOS=windows GOARCH=amd64 go build -o dist/mitremit-windows-amd64.exe mitre-mitigates.go
-        
-        echo "Built artifacts:"
-        ls -la dist/
-    
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: mitre-mitigates-binaries
-        path: dist/
-        retention-days: 5
+        # Проверяем, что бинарник запускается и показывает help
+        ./mitremit -h 2>&1 | grep -i "usage" && echo "✓ Build successful"

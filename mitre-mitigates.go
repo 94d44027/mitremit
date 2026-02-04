@@ -1,17 +1,11 @@
 // mitre-mitigates.go
 //
-// (EN) Tool that, given a MITRE ATT&CK mitigation (by external ID or by name),
+// Tool that, given a MITRE ATT&CK mitigation (by external ID or by name),
 // lists every technique / sub‑technique it mitigates.  Output can be a
 // table (default), JSON, CSV or Nebula Graph nGQL INSERT statements.
+//
 // It automatically downloads the latest ATT&CK enterprise STIX bundle
 // and caches the bundle locally.
-// 
-// (RU) Код на Go выполняет следующие действия:
-// Загружает набор данных MITRE ATT&CK в формате STIX (JSON) из репозитория MITRE (или из кэша, если уже скачано).
-// Парсит JSON, извлекая объекты: курсы действий (mitigations), методы атаки (techniques) и отношения (relationships).
-// Позволяет пользователю указать средство смягчения (mitigation) по его ID (например, M1037) или по имени.
-// Находит все методы атаки (techniques), которые смягчаются данным средством, используя отношения (relationships) с типом "mitigates".
-// Выводит результат в одном из форматов: таблица (по умолчанию), JSON, CSV или в виде команд nGQL для Nebula Graph.
 //
 // Build & run:
 //
@@ -21,7 +15,7 @@
 //   ./mitremit -mitigation M1037 -json > out.json
 //   ./mitremit -mitigation-name \"Disable or Remove Feature\" -ngql > out.ngql
 //
-// 
+// Author: ChatGPT (2024‑06) – MIT licence.
 // --------------------------------------------------------------
 
 package main
@@ -39,25 +33,43 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
 
 /*
 -------------------------------------------------------------
-
-	Global flag(s)
-	-------------------------------------------------------------
+Global flags
+-------------------------------------------------------------
 */
 var (
-	// `-debug` can be placed anywhere on the command line.
-	// It defaults to false and is parsed in `main` before any work.
+	// Основные флаги
 	flagDbg = flag.Bool("debug", false, "extra diagnostic output")
+
+	// Флаги управления кэшем
+	flagCacheDir = flag.String("cache-dir", "",
+		"cache directory (default: .mitre-cache or MITRE_CACHE_DIR env)")
+	flagNoCache = flag.Bool("no-cache", false,
+		"disable caching")
+	flagForceRefresh = flag.Bool("force-refresh", false,
+		"force download fresh bundle ignoring cache")
+
+	// Флаги запросов
+	flagMitigation = flag.String("mitigation", "",
+		"Mitigation external ID (e.g. M1037).")
+	flagMitigationName = flag.String("mitigation-name", "",
+		"Full mitigation name (case‑insensitive).")
+
+	// Флаги вывода
+	flagJSON = flag.Bool("json", false, "Emit JSON array.")
+	flagCSV  = flag.Bool("csv", false, "Emit CSV.")
+	flagNGQL = flag.Bool("ngql", false, "Emit Nebula Graph INSERT statements.")
+	flagHelp = flag.Bool("h", false, "Show help.")
 )
 
 /*
 -------------------------------------------------------------
-
-	Minimal STIX structures we need
-	-------------------------------------------------------------
+Minimal STIX structures we need
+-------------------------------------------------------------
 */
 type Bundle struct {
 	Type        string            `json:"type"`
@@ -105,9 +117,8 @@ type externalReference struct {
 
 /*
 -------------------------------------------------------------
-
-	Helper – pull the ATT&CK external ID from a slice of refs
-	-------------------------------------------------------------
+Helper – pull the ATT&CK external ID from a slice of refs
+-------------------------------------------------------------
 */
 func externalID(refs []externalReference) (string, bool) {
 	for _, r := range refs {
@@ -120,42 +131,130 @@ func externalID(refs []externalReference) (string, bool) {
 
 /*
 -------------------------------------------------------------
-
-	Download & cache the ATT&CK bundle
-	-------------------------------------------------------------
+Константы и функции для работы с кэшем
+-------------------------------------------------------------
 */
 const (
 	bundleURL = "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
-	cacheDir  = ".mitre-cache"
 )
 
+// getCacheDir определяет директорию для кэша с приоритетом:
+// 1. Флаг --cache-dir
+// 2. Переменная окружения MITRE_CACHE_DIR
+// 3. /tmp/.mitre-cache в контейнерах
+// 4. .mitre-cache для локальной разработки
+// 5. /dev/null если --no-cache
+func getCacheDir() string {
+	// 1. Проверяем флаг --no-cache
+	if *flagNoCache {
+		return "/dev/null"
+	}
+
+	// 2. Проверяем флаг --cache-dir
+	if *flagCacheDir != "" {
+		return *flagCacheDir
+	}
+
+	// 3. Проверяем переменную окружения
+	if dir := os.Getenv("MITRE_CACHE_DIR"); dir != "" {
+		return dir
+	}
+
+	// 4. Проверяем, находимся ли мы в контейнере
+	if isRunningInContainer() {
+		return "/tmp/.mitre-cache"
+	}
+
+	// 5. Fallback для локальной разработки
+	return ".mitre-cache"
+}
+
+// isRunningInContainer проверяет, запущено ли приложение в контейнере
+func isRunningInContainer() bool {
+	// Проверяем различные признаки контейнера
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		return true
+	}
+
+	// Проверяем cgroups (Linux)
+	if _, err := os.Stat("/proc/self/cgroup"); err == nil {
+		if data, err := os.ReadFile("/proc/self/cgroup"); err == nil {
+			content := string(data)
+			if strings.Contains(content, "docker") ||
+				strings.Contains(content, "kubepods") ||
+				strings.Contains(content, "containerd") {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+/*
+-------------------------------------------------------------
+Загрузка & кэширование ATT&CK bundle
+-------------------------------------------------------------
+*/
 func fetchBundle() ([]byte, error) {
+	// Получаем директорию кэша из окружения
+	cacheDir := getCacheDir()
+
 	// -----------------------------------------------------------------
-	// DEBUG: tell us we entered the function
+	// DEBUG: выводим информацию о директории кэша
 	// -----------------------------------------------------------------
 	if *flagDbg {
-		fmt.Fprintln(os.Stdout, ">>> fetchBundle() – entry point")
+		fmt.Fprintf(os.Stdout, ">>> fetchBundle() - entry point\n")
+		fmt.Fprintf(os.Stdout, ">>> cache directory: %s\n", cacheDir)
+		if *flagForceRefresh {
+			fmt.Fprintln(os.Stdout, ">>> force refresh enabled")
+		}
 	}
+
 	// -----------------------------------------------------------------
-	// 1️⃣ Ensure a writable cache directory exists
+	// 1️⃣ Проверяем и создаем директорию кэша (если нужно)
 	// -----------------------------------------------------------------
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return nil, err
+	// Не создаем директорию если это /dev/null (отключение кэша)
+	if cacheDir != "/dev/null" {
+		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create cache directory %s: %w", cacheDir, err)
+		}
 	}
+
 	bundlePath := filepath.Join(cacheDir, "enterprise-attack.json")
 
 	// -----------------------------------------------------------------
-	// 2️⃣ Use cached bundle if it exists
+	// 2️⃣ Используем кэшированный бандл если он существует
 	// -----------------------------------------------------------------
-	if cached, err := os.ReadFile(bundlePath); err == nil {
-		if *flagDbg {
-			fmt.Fprintln(os.Stdout, ">>> cached bundle found – returning cached data")
+	// Если cacheDir == "/dev/null", пропускаем проверку кэша
+	if cacheDir != "/dev/null" && !*flagForceRefresh {
+		if cached, err := os.ReadFile(bundlePath); err == nil {
+			if *flagDbg {
+				fmt.Fprintln(os.Stdout, ">>> cached bundle found – returning cached data")
+				fmt.Fprintf(os.Stdout, ">>> cache file: %s (%d bytes)\n",
+					bundlePath, len(cached))
+			}
+			return cached, nil // fast path – return cache
+		} else if !os.IsNotExist(err) {
+			// Если ошибка не "файл не существует", логируем но продолжаем
+			if *flagDbg {
+				fmt.Fprintf(os.Stdout, ">>> cache read error (will download): %v\n", err)
+			}
 		}
-		return cached, nil // fast path – return cache
+	} else if *flagDbg {
+		if *flagForceRefresh {
+			fmt.Fprintln(os.Stdout, ">>> force refresh - ignoring cache")
+		} else {
+			fmt.Fprintln(os.Stdout, ">>> cache disabled")
+		}
 	}
 
 	// -----------------------------------------------------------------
-	// 3️⃣ Download bundle
+	// 3️⃣ Загружаем бандл из сети
 	// -----------------------------------------------------------------
 	if *flagDbg {
 		fmt.Fprintln(os.Stdout, ">>> downloading ATT&CK bundle")
@@ -164,31 +263,83 @@ func fetchBundle() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if *flagDbg {
-		fmt.Fprintf(os.Stdout, ">>> downloaded bundle (%d bytes) – caching\n", len(data))
+		fmt.Fprintf(os.Stdout, ">>> downloaded bundle (%d bytes)\n", len(data))
 	}
-	_ = os.WriteFile(bundlePath, data, 0o644)
+
+	// -----------------------------------------------------------------
+	// 4️⃣ Кэшируем скачанный бандл (если кэш не отключен)
+	// -----------------------------------------------------------------
+	if cacheDir != "/dev/null" {
+		if *flagDbg {
+			fmt.Fprintf(os.Stdout, ">>> caching to: %s\n", bundlePath)
+		}
+		// Создаем временный файл для атомарной записи
+		tmpPath := bundlePath + ".tmp"
+		if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+			if *flagDbg {
+				fmt.Fprintf(os.Stdout, ">>> WARNING: failed to write cache: %v\n", err)
+			}
+			// Если не удалось записать кэш, все равно возвращаем данные
+		} else {
+			// Атомарно переименовываем временный файл в целевой
+			if err := os.Rename(tmpPath, bundlePath); err != nil {
+				if *flagDbg {
+					fmt.Fprintf(os.Stdout, ">>> WARNING: failed to rename cache file: %v\n", err)
+				}
+				// Пытаемся удалить временный файл
+				os.Remove(tmpPath)
+			} else if *flagDbg {
+				fmt.Fprintln(os.Stdout, ">>> cache saved successfully")
+			}
+		}
+	}
+
 	return data, nil
 }
 
 /* ---------- helper used by fetchBundle ---------- */
 func downloadBundle() ([]byte, error) {
-	resp, err := http.Get(bundleURL)
+	if *flagDbg {
+		fmt.Fprintf(os.Stdout, ">>> downloading from: %s\n", bundleURL)
+	}
+
+	// Создаем HTTP клиент с таймаутом
+	client := &http.Client{
+		Timeout: 5 * time.Minute, // Долгая загрузка больших файлов
+	}
+
+	resp, err := client.Get(bundleURL)
 	if err != nil {
 		return nil, fmt.Errorf("download bundle: %w", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("bundle HTTP %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+
+	// Читаем с ограничением по размеру (например, 200MB)
+	maxSize := 200 * 1024 * 1024 // 200MB
+	limitedReader := &io.LimitedReader{R: resp.Body, N: int64(maxSize)}
+
+	data, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if limitedReader.N <= 0 {
+		return nil, fmt.Errorf("bundle too large (max %d MB)", maxSize/1024/1024)
+	}
+
+	return data, nil
 }
 
 /*
 -------------------------------------------------------------
-
-	Core extraction logic
-	-------------------------------------------------------------
+Core extraction logic
+-------------------------------------------------------------
 */
 type techniqueInfo struct {
 	ExternalID string `json:"external_id"`
@@ -197,33 +348,20 @@ type techniqueInfo struct {
 
 func main() {
 	/* ---------------------------------------------------------
-	   Define command‑line flags
-	   --------------------------------------------------------- */
-	mitID := flag.String("mitigation", "", "Mitigation external ID (e.g. M1037).")
-	mitName := flag.String("mitigation-name", "", "Full mitigation name (case‑insensitive).")
-	flagJSON := flag.Bool("json", false, "Emit JSON array.")
-	flagCSV := flag.Bool("csv", false, "Emit CSV.")
-	flagNGQL := flag.Bool("ngql", false, "Emit Nebula Graph INSERT statements.")
-	flagHelp := flag.Bool("h", false, "Show help.")
-	// flagDbg is already declared globally
-
-	/* ---------------------------------------------------------
-	   IMPORTANT: parse flags *before* any work that uses them
+	   Парсинг флагов
 	   --------------------------------------------------------- */
 	flag.Parse()
 
-	if *flagHelp || (*mitID == "" && *mitName == "") {
-		fmt.Fprintf(os.Stderr,
-			`Usage: %s -mitigation Mxxxx [options]
-Options:
-   -mitigation          ATT&CK mitigation external ID (Mxxxx)
-   -mitigation-name    Full mitigation name (case‑insensitive)
-   -json                Output JSON
-   -csv                 Output CSV
-   -ngql                Output Nebula Graph INSERT statements
-   -debug               Extra diagnostic output
-   -h                   Show this help
-`, os.Args[0])
+	// Если запрошен help, показываем его и выходим с кодом 0
+	if *flagHelp {
+		printUsage()
+		os.Exit(0)
+	}
+
+	// Если не указаны обязательные флаги, показываем help и выходим с ошибкой
+	if *flagMitigation == "" && *flagMitigationName == "" {
+		printUsage()
+		fmt.Fprintln(os.Stderr, "\nERROR: must specify -mitigation or -mitigation-name")
 		os.Exit(1)
 	}
 
@@ -276,21 +414,21 @@ Options:
 	   Find the mitigation requested by the user
 	   --------------------------------------------------------- */
 	var chosenMitSTIXID string // STIX ID we will match on source_ref
-	if *mitID != "" {
+	if *flagMitigation != "" {
 		// lookup by external ID (Mxxxx)
 		for id, co := range mitMap {
-			if ext, ok := externalID(co.ExternalRefs); ok && strings.EqualFold(ext, *mitID) {
+			if ext, ok := externalID(co.ExternalRefs); ok && strings.EqualFold(ext, *flagMitigation) {
 				chosenMitSTIXID = id
 				break
 			}
 		}
 		if chosenMitSTIXID == "" {
-			fmt.Fprintf(os.Stderr, "mitigation %s not found in ATT&CK data\n", *mitID)
+			fmt.Fprintf(os.Stderr, "mitigation %s not found in ATT&CK data\n", *flagMitigation)
 			os.Exit(1)
 		}
 	} else {
 		// lookup by name (case‑insensitive)
-		target := strings.TrimSpace(*mitName)
+		target := strings.TrimSpace(*flagMitigationName)
 		for id, co := range mitMap {
 			if strings.EqualFold(co.Name, target) {
 				chosenMitSTIXID = id
@@ -359,9 +497,44 @@ Options:
 
 /*
 -------------------------------------------------------------
+Функция для вывода справки
+-------------------------------------------------------------
+*/
+func printUsage() {
+	fmt.Printf(`Usage: %s -mitigation Mxxxx [options]
+Options:
+   -mitigation          ATT&CK mitigation external ID (Mxxxx)
+   -mitigation-name    Full mitigation name (case‑insensitive)
+   
+Output formats:
+   -json                Output JSON
+   -csv                 Output CSV
+   -ngql                Output Nebula Graph INSERT statements
+   
+Cache control:
+   --cache-dir DIR      Cache directory (default: MITRE_CACHE_DIR env or .mitre-cache)
+   --no-cache           Disable caching
+   --force-refresh      Force download fresh bundle ignoring cache
+   
+Debug:
+   -debug               Extra diagnostic output
+   -h                   Show this help
 
-	Pretty‑print table (default output)
-	-------------------------------------------------------------
+Environment variables:
+   MITRE_CACHE_DIR      Cache directory (overrides default)
+
+Examples:
+   %s -mitigation M1037
+   %s -mitigation M1037 -json
+   %s -mitigation M1037 --no-cache
+   MITRE_CACHE_DIR=/cache %s -mitigation M1037 --force-refresh
+`, os.Args[0], os.Args[0], os.Args[0], os.Args[0])
+}
+
+/*
+-------------------------------------------------------------
+Pretty‑print table (default output)
+-------------------------------------------------------------
 */
 func printTable(mitSTIX string, mit courseOfAction, data []techniqueInfo) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -378,9 +551,8 @@ func printTable(mitSTIX string, mit courseOfAction, data []techniqueInfo) {
 
 /*
 -------------------------------------------------------------
-
-	Nebula Graph nGQL generation
-	-------------------------------------------------------------
+Nebula Graph nGQL generation
+-------------------------------------------------------------
 */
 func quoteID(s string) string {
 	return "`" + strings.ReplaceAll(s, "`", "``") + "`"

@@ -1,0 +1,66 @@
+name: Go CI/CD
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Go 1.25.6
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.25.6'
+        cache: true
+    
+    - name: Verify Go version
+      run: |
+        echo "Go version:"
+        go version
+        # Проверяем, что используется нужная версия
+        go version | grep -q "go1.25.6" || exit 1
+    
+    - name: Build
+      run: |
+        go build -o mitremit mitre-mitigates.go
+        echo "✅ Build successful"
+        ls -lh mitremit
+    
+    - name: Test
+      run: |
+        ./mitremit -h
+        echo "✅ Help command works"
+    
+    - name: Create multi-platform binaries
+      run: |
+        mkdir -p dist
+        
+        # Linux
+        GOOS=linux GOARCH=amd64 go build -o dist/mitremit-linux-amd64 mitre-mitigates.go
+        
+        # macOS (Intel)
+        GOOS=darwin GOARCH=amd64 go build -o dist/mitremit-darwin-amd64 mitre-mitigates.go
+        
+        # macOS (Apple Silicon)
+        GOOS=darwin GOARCH=arm64 go build -o dist/mitremit-darwin-arm64 mitre-mitigates.go
+        
+        # Windows
+        GOOS=windows GOARCH=amd64 go build -o dist/mitremit-windows-amd64.exe mitre-mitigates.go
+        
+        echo "📦 Built artifacts:"
+        ls -lh dist/
+    
+    - name: Upload binaries
+      uses: actions/upload-artifact@v4
+      with:
+        name: mitre-tool-binaries-go1.25.6
+        path: |
+          mitremit
+          dist/

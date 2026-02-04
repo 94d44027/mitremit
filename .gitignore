@@ -1,4 +1,5 @@
 # Binaries
+mitremit
 mitre-sync
 mitre-sync.exe
 dist/
@@ -15,5 +16,9 @@ dist/
 Thumbs.db
 
 # Cache
-.mitre-cache/
+
 coverage.out
+
+examples/
+trivy*
+

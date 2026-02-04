@@ -7,8 +7,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     mitre-mitigates.go
 FROM alpine:3.18
 RUN apk add --no-cache ca-certificates tzdata
-RUN addgroup -g 1000 appgroup && \
-    adduser -u 1000 -G appgroup -D appuser
+RUN addgroup -g 1000 appgroup
+RUN adduser -u 1000 -G appgroup -D appuser
 WORKDIR /app
 COPY --from=builder --chown=appuser:appgroup /build/mitre-sync .
 USER appuser
@@ -16,5 +16,5 @@ ENV TMPDIR=/tmp \
     HOME=/tmp
 VOLUME ["/tmp/.mitre-cache"]
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["/app/mitre-sync", "-h"] || exit 1
+    CMD /app/mitre-sync -h || exit 1
 ENTRYPOINT ["/app/mitre-sync"]

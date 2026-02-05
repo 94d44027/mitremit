@@ -6,9 +6,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o mitre-sync \
     mitre-mitigates.go
 FROM alpine:3.18
-RUN apk add --no-cache ca-certificates tzdata
-RUN addgroup -g 1000 appgroup
-RUN adduser -u 1000 -G appgroup -D appuser
+
+RUN apk add --no-cache \
+        ca-certificates=20240705-r0 \
+        tzdata=2024a-r1 \
+    && addgroup -g 1000 appgroup \
+    && adduser -u 1000 -G appgroup -D appuser
+
 WORKDIR /app
 COPY --from=builder --chown=appuser:appgroup /build/mitre-sync .
 USER appuser

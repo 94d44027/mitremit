@@ -6,10 +6,6 @@ on:
   pull_request:
     branches: [master]
 
-# Отменяем предыдущие запуски при новом push
-concurrency:
-  group: security-${{ github.ref }}
-  cancel-in-progress: true
 
 # Pinned versions для воспроизводимости
 env:

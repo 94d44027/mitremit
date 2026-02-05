@@ -1,2 +1,3 @@
-- vulnerability: CVE-2025-60876
+ignore:
+  - vulnerability: CVE-2025-60876
     reason: "busybox wget not used - Go app uses native net/http"

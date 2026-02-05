@@ -15,85 +15,59 @@
 - **Cloud Native готовность** - 12-Factor App, stateless, Docker-ready
 - **Безопасность** - непривилегированный пользователь, read-only режим
 
-## Установка и сборка
+### Установка и сборка
 
-### Локальная сборка
 ```bash
+# Локальная сборка
 go build -o mitremit mitre-mitigates.go
-```
 
-### Docker сборка
-```bash
+# Docker сборка
 make docker-build
-```
 
-### Сборка для всех платформ
-```bash
+# Сборка для всех платформ
 make build-all
 ```
 
-## Использование
+### Использование
 
-### Базовый пример (таблица):
 ```bash
+# Базовый пример (таблица):
 ./mitremit -mitigation M1037
-```
 
-### JSON вывод:
-```bash
+# JSON вывод:
 ./mitremit -mitigation M1037 -json > output.json
-```
 
-### Поиск по названию:
-```bash
+# Поиск по названию:
 ./mitremit -mitigation-name "Filter Network Traffic" -csv
-```
 
-### Генерация nGQL-запросов:
-```bash
+# Генерация nGQL-запросов:
 ./mitremit -mitigation M1037 -ngql > nebula_inserts.ngql
-```
 
-### Отключение кэша (для CI/CD):
-```bash
+# Отключение кэша (для CI/CD):
 ./mitremit -mitigation M1037 --no-cache
 ```
 
-## Docker использование
+### Docker использование
 
-### Сборка образа:
 ```bash
+# Сборка образа:
 make docker-build
-```
 
-### Запуск с локальным кэшем:
-```bash
+# Запуск с локальным кэшем:
 make docker-run
-```
 
-### Запуск без кэша:
-```bash
+# Запуск без кэша:
 make docker-run-nocache
-```
 
-### Запуск с Docker volume:
-```bash
+# Запуск с Docker volume:
 make docker-run-volume
-```
 
-### Shell в контейнере для отладки:
-```bash
-make docker-shell
-```
-
-### Полное тестирование Docker образа:
-```bash
+# Shell в контейнере для отладки:
 make docker-test
 ```
 
-## Пример вывода
+### Пример вывода
 
-### Таблица (по умолчанию):
 ```
 MITIGATION       Filter Network Traffic (M1037)
 ----------------------------------------------------------------
@@ -103,7 +77,6 @@ T1565            Data Manipulation
 T1573            Encrypted Channel
 ```
 
-### JSON:
 ```json
 [
   {
@@ -117,14 +90,12 @@ T1573            Encrypted Channel
 ]
 ```
 
-### CSV:
 ```csv
 Mitigation ID,Mitigation Name,Technique ID,Technique Name
 M1037,Filter Network Traffic,T1071,Application Layer Protocol
 M1037,Filter Network Traffic,T1565,Data Manipulation
 ```
 
-### nGQL:
 ```sql
 INSERT VERTEX mitigation(id, name) VALUES `M1037`:("M1037", "Filter Network Traffic");
 INSERT VERTEX technique(id, name) VALUES `T1071`:("T1071", "Application Layer Protocol");

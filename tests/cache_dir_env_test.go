@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -37,18 +38,23 @@ func getBinary(t *testing.T) string {
 	return bin
 }
 
+// repoRoot возвращает корень модуля (директорию с go.mod), не завися от текущей рабочей директории.
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	// При вызове "go test ./tests/" рабочая директория — корень модуля
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
+	_, file, _, _ := runtime.Caller(1)
+	dir := filepath.Dir(file)
+	// Тесты лежат в tests/, корень модуля — родитель
+	if filepath.Base(dir) == "tests" {
+		return filepath.Dir(dir)
 	}
-	// Если тест запущен из tests/, поднимаемся на уровень выше
-	if filepath.Base(wd) == "tests" {
-		return filepath.Dir(wd)
+	// Иначе поднимаемся вверх до каталога с go.mod
+	for d := dir; d != filepath.Dir(d); d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			return d
+		}
 	}
-	return wd
+	t.Fatal("repo root (go.mod) not found")
+	return ""
 }
 
 // runMitremit запускает бинарник с заданным env и аргументами, возвращает stdout и stderr.

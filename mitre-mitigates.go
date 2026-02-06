@@ -135,9 +135,14 @@ func getCacheDir() string {
 		return *flagCacheDir
 	}
 
-	// 3. Проверяем переменную окружения
+	// 3. Проверяем переменную окружения (только абсолютный путь — защита от path traversal)
 	if dir := os.Getenv("MITRE_CACHE_DIR"); dir != "" {
-		return dir
+		cleaned := filepath.Clean(dir)
+		if !filepath.IsAbs(cleaned) {
+			fmt.Fprintf(os.Stderr, "WARNING: MITRE_CACHE_DIR must be absolute path, ignoring: %s\n", dir)
+		} else {
+			return cleaned
+		}
 	}
 
 	// 4. Проверяем, находимся ли мы в контейнере

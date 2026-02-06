@@ -513,7 +513,7 @@ Examples:
    %s -mitigation M1037 -json
    %s -mitigation M1037 --no-cache
    MITRE_CACHE_DIR=/cache %s -mitigation M1037 --force-refresh
-`, os.Args[0], os.Args[0], os.Args[0], os.Args[0])
+`, os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
 }
 
 /*

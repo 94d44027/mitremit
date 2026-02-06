@@ -1,23 +1,3 @@
-// mitre-mitigates.go
-//
-// Tool that, given a MITRE ATT&CK mitigation (by external ID or by name),
-// lists every technique / sub‑technique it mitigates.  Output can be a
-// table (default), JSON, CSV or Nebula Graph nGQL INSERT statements.
-//
-// It automatically downloads the latest ATT&CK enterprise STIX bundle
-// and caches the bundle locally.
-//
-// Build & run:
-//
-//   go mod init mitremit
-//   go build -o mitremit mitre-mitigates.go
-//   ./mitremit -mitigation M1037               # table (default)
-//   ./mitremit -mitigation M1037 -json > out.json
-//   ./mitremit -mitigation-name \"Disable or Remove Feature\" -ngql > out.ngql
-//
-// Author: ChatGPT (2024‑06) – MIT licence.
-// --------------------------------------------------------------
-
 package main
 
 import (
